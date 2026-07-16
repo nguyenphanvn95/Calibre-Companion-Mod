@@ -1,0 +1,374 @@
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:logger/logger.dart';
+
+import 'package:calibre_web_companion/features/settings/data/datasources/settings_local_datasource.dart';
+import 'package:calibre_web_companion/features/settings/data/models/settings_model.dart';
+import 'package:calibre_web_companion/features/settings/data/models/theme_source.dart';
+import 'package:calibre_web_companion/features/settings/data/models/download_schema.dart';
+import 'package:calibre_web_companion/core/services/webdav_sync_service.dart';
+import 'package:calibre_web_companion/core/di/injection_container.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+enum DownloaderUrlStatus { reachable, authRequired, unreachable }
+
+class SettingsRepository {
+  final SettingsLocalDataSource dataSource;
+
+  SettingsRepository({required this.dataSource});
+
+  Future<SettingsModel> getSettings() async {
+    try {
+      return await dataSource.getSettings();
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    try {
+      await dataSource.saveThemeMode(mode);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setThemeSource(ThemeSource source) async {
+    try {
+      await dataSource.saveThemeSource(source);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setSelectedColor(String colorKey) async {
+    try {
+      await dataSource.saveSelectedColor(colorKey);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setDownloaderEnabled(bool enabled) async {
+    try {
+      await dataSource.saveDownloaderEnabled(enabled);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setDownloaderUrl(String url) async {
+    try {
+      await dataSource.saveDownloaderUrl(url);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setDownloaderCredentials(
+    String username,
+    String password,
+  ) async {
+    try {
+      await dataSource.saveDownloaderCredentials(username, password);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setSend2ereaderEnabled(bool enabled) async {
+    try {
+      await dataSource.saveSend2ereaderEnabled(enabled);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setSend2ereaderUrl(String url) async {
+    try {
+      await dataSource.saveSend2ereaderUrl(url);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setDefaultDownloadPath(String path) async {
+    try {
+      await dataSource.saveDefaultDownloadPath(path);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setDownloadSchema(DownloadSchema schema) async {
+    try {
+      await dataSource.saveDownloadSchema(schema);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> submitFeedback(String title, String description) async {
+    try {
+      return await dataSource.submitFeedback(title, description);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setLanguage(String language) async {
+    try {
+      await dataSource.saveLanguage(language);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<String> getLanguage() async {
+    return await dataSource.getLanguage();
+  }
+
+  Future<void> setShowReadNowButton(bool enabled) async {
+    try {
+      await dataSource.saveShowReadNowButton(enabled);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setStoreReadNowAndSendToEReaderOnDevice(bool enabled) async {
+    try {
+      await dataSource.saveStoreReadNowAndSendToEReaderOnDevice(enabled);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setShowSendToEReaderButton(bool enabled) async {
+    try {
+      await dataSource.saveShowSendToEReaderButton(enabled);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> buyMeACoffee() async {
+    try {
+      return await dataSource.buyMeACoffe();
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setWebDavSyncEnabled(bool enabled) async {
+    try {
+      await dataSource.saveWebDavSyncEnabled(enabled);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setWebDavUrl(String url) async {
+    try {
+      await dataSource.saveWebDavUrl(url);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setWebDavCredentials(String username, String password) async {
+    try {
+      await dataSource.saveWebDavCredentials(username, password);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<bool> testDownloaderConnection(
+    String url,
+    String username,
+    String password,
+  ) async {
+    try {
+      final baseUrl =
+          url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+
+      final client = getIt<http.Client>();
+
+      if (username.isEmpty && password.isEmpty) {
+        final uri = Uri.parse('$baseUrl/api/config');
+        final response = await client.get(uri);
+
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          throw Exception("Authentication required");
+        }
+
+        return response.statusCode == 200;
+      }
+
+      final uri = Uri.parse('$baseUrl/api/auth/login');
+      final response = await client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': username,
+          'password': password,
+          'remember_me': true,
+        }),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      if (e.toString().contains("Authentication required")) {
+        throw Exception("Authentication required");
+      }
+      throw Exception("Connection failed: $e");
+    }
+  }
+
+  Future<DownloaderUrlStatus> probeDownloaderUrl(String url) async {
+    if (url.trim().isEmpty) return DownloaderUrlStatus.unreachable;
+    try {
+      final baseUrl =
+          url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+      final client = getIt<http.Client>();
+      final response = await client
+          .get(Uri.parse('$baseUrl/api/config'))
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        return DownloaderUrlStatus.authRequired;
+      }
+      return DownloaderUrlStatus.reachable;
+    } catch (_) {
+      return DownloaderUrlStatus.unreachable;
+    }
+  }
+
+  Future<bool> isUrlReachable(String url) async {
+    if (url.trim().isEmpty) return false;
+    try {
+      final client = getIt<http.Client>();
+      await client.get(Uri.parse(url)).timeout(const Duration(seconds: 8));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> testWebDavConnection(
+    String url,
+    String username,
+    String password,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final service = WebDavSyncService(logger: Logger());
+      service.init(
+        url,
+        username,
+        password,
+        allowSelfSigned: prefs.getBool('allow_self_signed') ?? false,
+      );
+      await service.testConnection();
+      return true;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setEInkMode(bool enabled) async {
+    try {
+      await dataSource.saveEInkMode(enabled);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setTextScale(double scale) async {
+    try {
+      await dataSource.saveTextScale(scale);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setBookActionsOrder(List<String> actionKeys) async {
+    try {
+      await dataSource.saveBookActionsOrder(actionKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setEnabledBookActions(List<String> actionKeys) async {
+    try {
+      await dataSource.saveEnabledBookActions(actionKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setBookDetailsSectionsOrder(List<String> sectionKeys) async {
+    try {
+      await dataSource.saveBookDetailsSectionsOrder(sectionKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setEnabledBookDetailsSections(List<String> sectionKeys) async {
+    try {
+      await dataSource.saveEnabledBookDetailsSections(sectionKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setDiscoverMainSectionsOrder(List<String> sectionKeys) async {
+    try {
+      await dataSource.saveDiscoverMainSectionsOrder(sectionKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setEnabledDiscoverMainSections(List<String> sectionKeys) async {
+    try {
+      await dataSource.saveEnabledDiscoverMainSections(sectionKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setDiscoverItemsOrder(List<String> itemKeys) async {
+    try {
+      await dataSource.saveDiscoverItemsOrder(itemKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setEnabledDiscoverItems(List<String> itemKeys) async {
+    try {
+      await dataSource.saveEnabledDiscoverItems(itemKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setCategoryItemsOrder(List<String> itemKeys) async {
+    try {
+      await dataSource.saveCategoryItemsOrder(itemKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> setEnabledCategoryItems(List<String> itemKeys) async {
+    try {
+      await dataSource.saveEnabledCategoryItems(itemKeys);
+    } catch (e) {
+      rethrow;
+    }
+  }
+}

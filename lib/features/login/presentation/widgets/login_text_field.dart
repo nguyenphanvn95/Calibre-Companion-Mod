@@ -1,0 +1,84 @@
+import 'package:flutter/material.dart';
+
+class LoginTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final String labelText;
+  final String? hintText;
+  final String? helperText;
+  final Widget? prefix;
+  final Widget? suffix;
+  final bool obscureText;
+  final String? autofillHint;
+  final List<String>? autofillHints;
+  final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
+
+  const LoginTextField({
+    super.key,
+    required this.controller,
+    required this.labelText,
+    this.hintText,
+    this.helperText,
+    this.prefix,
+    this.suffix,
+    this.obscureText = false,
+    this.autofillHint,
+    this.autofillHints,
+    this.keyboardType,
+    this.textInputAction,
+    this.onChanged,
+    this.onSubmitted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ValueNotifier<bool> isObscureTextNotifier = ValueNotifier<bool>(
+      obscureText,
+    );
+
+    return ValueListenableBuilder<bool>(
+      valueListenable: isObscureTextNotifier,
+      builder: (context, isObscureText, _) {
+        return TextField(
+          controller: controller,
+          autofillHints:
+              autofillHints ?? (autofillHint != null ? [autofillHint!] : null),
+          keyboardType: keyboardType,
+          textInputAction: textInputAction,
+          onSubmitted: onSubmitted,
+          onChanged: onChanged,
+          obscureText: isObscureText,
+          decoration: InputDecoration(
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12.0),
+            ),
+            labelText: labelText,
+            hintText: hintText,
+            helperText: helperText,
+            helperMaxLines: 2,
+            prefixIcon: prefix,
+            suffixIcon:
+                obscureText
+                    ? IconButton(
+                      icon: Icon(
+                        isObscureText ? Icons.visibility : Icons.visibility_off,
+                      ),
+                      onPressed: () {
+                        isObscureTextNotifier.value = !isObscureText;
+                      },
+                    )
+                    : suffix,
+            filled: true,
+            fillColor: Theme.of(context).colorScheme.surface,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 14.0,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}

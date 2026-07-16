@@ -1,0 +1,216 @@
+import 'package:calibre_web_companion/l10n/app_localizations.dart';
+import 'package:flutter/material.dart';
+import 'package:get_it/get_it.dart';
+import 'package:calibre_web_companion/shared/widgets/app_skeletonizer.dart';
+import 'package:calibre_web_companion/features/discover_details/data/repositories/discover_details_repository.dart';
+import 'package:calibre_web_companion/features/discover_details/data/models/category_feed_model.dart';
+import 'package:calibre_web_companion/features/discover_details/data/models/category_model.dart';
+import 'package:calibre_web_companion/features/discover/blocs/discover_event.dart';
+
+enum FilterType { author, series, category, language, publisher }
+
+class FilterSelectionPage extends StatefulWidget {
+  final String title;
+  final FilterType type;
+  final List<String> initialSelection;
+
+  const FilterSelectionPage({
+    super.key,
+    required this.title,
+    required this.type,
+    required this.initialSelection,
+  });
+
+  @override
+  State<FilterSelectionPage> createState() => _FilterSelectionPageState();
+}
+
+class _FilterSelectionPageState extends State<FilterSelectionPage> {
+  late List<String> selectedItems;
+  List<CategoryModel> items = [];
+  bool isLoading = true;
+  String? errorMessage;
+  bool isNotFound = false;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedItems = List.from(widget.initialSelection);
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    final repo = GetIt.I<DiscoverDetailsRepository>();
+    try {
+      CategoryFeed feed;
+
+      switch (widget.type) {
+        case FilterType.author:
+          feed = await repo.loadCategories(
+            CategoryType.author,
+            subPath: "letter/00",
+          );
+          break;
+        case FilterType.series:
+          feed = await _loadCustomFeed(repo, "/opds/series/letter/00");
+          break;
+        case FilterType.category:
+          feed = await repo.loadCategories(
+            CategoryType.category,
+            subPath: "letter/00",
+          );
+          break;
+        case FilterType.language:
+          feed = await _loadCustomFeed(repo, "/opds/language");
+          break;
+        case FilterType.publisher:
+          feed = await _loadCustomFeed(repo, "/opds/publisher");
+          break;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        items = feed.categories;
+        isLoading = false;
+        errorMessage = null;
+        isNotFound = false;
+      });
+    } catch (e) {
+      final error = e.toString();
+      final endpointDisabledOrMissing = error.contains('404');
+
+      if (!mounted) return;
+      setState(() {
+        errorMessage = error;
+        isNotFound = endpointDisabledOrMissing;
+        isLoading = false;
+      });
+    }
+  }
+
+  Future<CategoryFeed> _loadCustomFeed(
+    DiscoverDetailsRepository repo,
+    String path,
+  ) async {
+    return await repo.dataSource.loadCategoriesgeneric(path);
+  }
+
+  void _toggleSelectAll() {
+    setState(() {
+      if (selectedItems.length == items.length) {
+        selectedItems.clear();
+      } else {
+        selectedItems = items.map((e) => e.title).toList();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final localizations = AppLocalizations.of(context)!;
+    final allSelected =
+        items.isNotEmpty && selectedItems.length == items.length;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("${localizations.select} ${widget.title}"),
+        actions: [
+          if (!isLoading && errorMessage == null)
+            IconButton(
+              tooltip:
+                  allSelected
+                      ? localizations.deselectAll
+                      : localizations.selectAll,
+              icon: Icon(
+                allSelected ? Icons.deselect_outlined : Icons.select_all,
+              ),
+              onPressed: _toggleSelectAll,
+            ),
+          IconButton(
+            icon: const Icon(Icons.check),
+            onPressed: () => Navigator.pop(context, selectedItems),
+          ),
+        ],
+      ),
+      body:
+          isLoading
+              ? AppSkeletonizer(
+                enabled: true,
+                child: ListView.builder(
+                  itemCount: 10,
+                  itemBuilder:
+                      (_, _) => ListTile(title: Text(localizations.loading)),
+                ),
+              )
+              : errorMessage != null
+              ? isNotFound
+                  ? _buildNotFoundWidget(context, localizations)
+                  : Center(child: Text("${localizations.error}: $errorMessage"))
+              : ListView.builder(
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final isSelected = selectedItems.contains(item.title);
+                  return CheckboxListTile(
+                    title: Text(item.title),
+                    value: isSelected,
+                    onChanged: (val) {
+                      setState(() {
+                        if (val == true) {
+                          selectedItems.add(item.title);
+                        } else {
+                          selectedItems.remove(item.title);
+                        }
+                      });
+                    },
+                  );
+                },
+              ),
+    );
+  }
+
+  Widget _buildNotFoundWidget(
+    BuildContext context,
+    AppLocalizations localizations,
+  ) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.visibility_off_outlined,
+              size: 80,
+              color: Theme.of(
+                context,
+              ).colorScheme.secondary.withValues(alpha: 0.5),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              localizations.sectionDisabledOrNotFound,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              localizations.sectionDisabledDescription,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).pop(),
+              icon: const Icon(Icons.arrow_back),
+              label: Text(localizations.goBack),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

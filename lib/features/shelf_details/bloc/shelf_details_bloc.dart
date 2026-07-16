@@ -1,0 +1,236 @@
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import 'package:calibre_web_companion/features/shelf_view.dart/bloc/shelf_view_bloc.dart';
+import 'package:calibre_web_companion/features/shelf_view.dart/bloc/shelf_view_event.dart';
+import 'package:calibre_web_companion/features/shelf_details/bloc/shelf_details_event.dart';
+import 'package:calibre_web_companion/features/shelf_details/bloc/shelf_details_state.dart';
+
+import 'package:calibre_web_companion/features/shelf_details/data/repositories/shelf_details_repository.dart';
+
+class ShelfDetailsBloc extends Bloc<ShelfDetailsEvent, ShelfDetailsState> {
+  final ShelfDetailsRepository repository;
+  final ShelfViewBloc shelfViewBloc;
+
+  ShelfDetailsBloc({required this.repository, required this.shelfViewBloc})
+    : super(const ShelfDetailsState()) {
+    on<LoadShelfDetails>(_onLoadShelfDetails);
+    on<LoadMoreShelfDetails>(_onLoadMoreShelfDetails);
+    on<RemoveFromShelf>(_onRemoveFromShelf);
+    on<EditShelf>(_onEditShelf);
+    on<DeleteShelf>(_onDeleteShelf);
+  }
+
+  Future<void> _onLoadShelfDetails(
+    LoadShelfDetails event,
+    Emitter<ShelfDetailsState> emit,
+  ) async {
+    emit(state.copyWith(status: ShelfDetailsStatus.loading));
+
+    try {
+      final isOpds = repository.getIsOpds();
+      final result = await repository.getShelfDetails(
+        event.shelfId,
+        isMagic: event.isMagic,
+      );
+
+      final mergedResult = result.copyWith(
+        name: event.shelfTitle,
+        isPublic: result.isPublic || event.isPublic,
+      );
+
+      emit(
+        state.copyWith(
+          status: ShelfDetailsStatus.loaded,
+          currentShelfDetail: mergedResult,
+          errorMessage: null,
+          isOpds: isOpds,
+          isLoadingMore: false,
+          hasMoreBooks: result.nextOffset != null,
+          nextOffset: result.nextOffset,
+          isMagic: event.isMagic,
+          magicIcon: event.icon,
+        ),
+      );
+    } catch (e) {
+      emit(
+        state.copyWith(
+          status: ShelfDetailsStatus.error,
+          errorMessage: e.toString(),
+        ),
+      );
+    }
+  }
+
+  Future<void> _onLoadMoreShelfDetails(
+    LoadMoreShelfDetails event,
+    Emitter<ShelfDetailsState> emit,
+  ) async {
+    final current = state.currentShelfDetail;
+    if (state.isLoadingMore ||
+        !state.hasMoreBooks ||
+        state.nextOffset == null ||
+        current == null) {
+      return;
+    }
+
+    emit(state.copyWith(isLoadingMore: true));
+
+    try {
+      final page = await repository.getShelfDetails(
+        event.shelfId,
+        offset: state.nextOffset!,
+        isMagic: state.isMagic,
+      );
+
+      final existingIds = current.books.map((b) => b.id).toSet();
+      final newBooks = page.books.where((b) => !existingIds.contains(b.id));
+      final mergedBooks = [...current.books, ...newBooks];
+
+      emit(
+        state.copyWith(
+          currentShelfDetail: current.copyWith(books: mergedBooks),
+          isLoadingMore: false,
+          hasMoreBooks: page.nextOffset != null,
+          nextOffset: page.nextOffset,
+        ),
+      );
+    } catch (e) {
+      emit(state.copyWith(isLoadingMore: false));
+    }
+  }
+
+  Future<void> _onRemoveFromShelf(
+    RemoveFromShelf event,
+    Emitter<ShelfDetailsState> emit,
+  ) async {
+    emit(state.copyWith(actionDetailsStatus: ShelfDetailsActionStatus.loading));
+
+    try {
+      final success = await repository.removeFromShelf(
+        event.shelfId,
+        event.bookId,
+      );
+
+      if (success) {
+        emit(
+          state.copyWith(
+            actionDetailsStatus: ShelfDetailsActionStatus.success,
+            actionMessage: 'Book removed from shelf successfully',
+          ),
+        );
+
+        shelfViewBloc.add(RemoveShelfFromState(event.shelfId));
+      } else {
+        emit(
+          state.copyWith(
+            actionDetailsStatus: ShelfDetailsActionStatus.error,
+            actionMessage: 'Failed to remove book from shelf',
+          ),
+        );
+      }
+    } catch (e) {
+      emit(
+        state.copyWith(
+          actionDetailsStatus: ShelfDetailsActionStatus.error,
+          actionMessage: e.toString(),
+        ),
+      );
+      return;
+    }
+  }
+
+  Future<void> _onEditShelf(
+    EditShelf event,
+    Emitter<ShelfDetailsState> emit,
+  ) async {
+    emit(
+      state.copyWith(
+        actionDetailsStatus: ShelfDetailsActionStatus.loading,
+        actionMessage: null,
+      ),
+    );
+
+    try {
+      final success = await repository.editShelf(
+        event.shelfId,
+        event.newShelfName,
+        isPublic: event.isPublic,
+      );
+      if (success) {
+        emit(
+          state.copyWith(
+            currentShelfDetail: state.currentShelfDetail!.copyWith(
+              name: event.newShelfName,
+              isPublic: event.isPublic,
+            ),
+            actionDetailsStatus: ShelfDetailsActionStatus.success,
+            actionMessage: 'Shelf edited successfully',
+          ),
+        );
+
+        shelfViewBloc.add(
+          EditShelfState(
+            event.shelfId,
+            event.newShelfName,
+            isPublic: event.isPublic,
+          ),
+        );
+      } else {
+        emit(
+          state.copyWith(
+            actionDetailsStatus: ShelfDetailsActionStatus.error,
+            actionMessage: 'Failed to edit shelf',
+          ),
+        );
+      }
+    } catch (e) {
+      emit(
+        state.copyWith(
+          actionDetailsStatus: ShelfDetailsActionStatus.error,
+          actionMessage: e.toString(),
+        ),
+      );
+      return;
+    }
+  }
+
+  Future<void> _onDeleteShelf(
+    DeleteShelf event,
+    Emitter<ShelfDetailsState> emit,
+  ) async {
+    emit(
+      state.copyWith(
+        actionDetailsStatus: ShelfDetailsActionStatus.loading,
+        actionMessage: null,
+      ),
+    );
+
+    try {
+      final success = await repository.deleteShelf(event.shelfId);
+
+      if (success) {
+        emit(
+          state.copyWith(
+            actionDetailsStatus: ShelfDetailsActionStatus.success,
+            actionMessage: 'Shelf deleted successfully',
+          ),
+        );
+      } else {
+        emit(
+          state.copyWith(
+            actionDetailsStatus: ShelfDetailsActionStatus.error,
+            actionMessage: 'Failed to delete shelf',
+          ),
+        );
+      }
+    } catch (e) {
+      emit(
+        state.copyWith(
+          actionDetailsStatus: ShelfDetailsActionStatus.error,
+          actionMessage: e.toString(),
+        ),
+      );
+      return;
+    }
+  }
+}

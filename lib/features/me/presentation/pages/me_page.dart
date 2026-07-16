@@ -1,0 +1,439 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import 'package:calibre_web_companion/features/me/bloc/me_bloc.dart';
+import 'package:calibre_web_companion/features/me/bloc/me_event.dart';
+import 'package:calibre_web_companion/features/me/bloc/me_state.dart';
+import 'package:calibre_web_companion/features/login/bloc/login_bloc.dart';
+import 'package:calibre_web_companion/features/login/bloc/login_event.dart';
+import 'package:calibre_web_companion/features/book_view/bloc/book_view_bloc.dart';
+import 'package:calibre_web_companion/features/book_view/bloc/book_view_event.dart';
+import 'package:calibre_web_companion/features/login/bloc/login_state.dart';
+
+import 'package:calibre_web_companion/main.dart';
+import 'package:calibre_web_companion/features/me/data/models/stats_model.dart';
+import 'package:calibre_web_companion/core/services/app_transition.dart';
+import 'package:calibre_web_companion/core/services/snackbar.dart';
+import 'package:calibre_web_companion/features/me/presentation/widgets/stats_card_widget.dart';
+import 'package:calibre_web_companion/shared/widgets/long_button_widget.dart';
+import 'package:calibre_web_companion/shared/widgets/app_dialog_button.dart';
+import 'package:calibre_web_companion/features/login/presentation/pages/login_page.dart';
+import 'package:calibre_web_companion/features/settings/presentation/pages/settings_page.dart';
+import 'package:calibre_web_companion/features/shelf_view.dart/presentation/pages/shelf_view_page.dart';
+import 'package:calibre_web_companion/features/discover/blocs/discover_event.dart';
+import 'package:calibre_web_companion/l10n/app_localizations.dart';
+import 'package:calibre_web_companion/features/discover_details/presentation/pages/discover_details_page.dart';
+import 'package:calibre_web_companion/features/homepage/presentation/pages/home_page.dart';
+
+class MePage extends StatelessWidget {
+  const MePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final localizations = AppLocalizations.of(context)!;
+
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<LoginBloc, LoginState>(
+          listenWhen:
+              (previous, current) =>
+                  previous.status != current.status &&
+                  current.status == LoginStatus.success,
+          listener: (context, loginState) {
+            context.read<LoginBloc>().add(const ResetLoginStatus());
+
+            context.read<MeBloc>().add(const LoadStats());
+
+            context.read<BookViewBloc>().add(const LoadViewSettings());
+            context.read<BookViewBloc>().add(const RefreshBooks());
+
+            Navigator.of(context).pushAndRemoveUntil(
+              AppTransitions.createSlideRoute(const HomePage()),
+              (route) => false,
+            );
+          },
+        ),
+      ],
+      child: BlocProvider(
+        create: (context) => getIt<MeBloc>()..add(const LoadStats()),
+        child: BlocConsumer<MeBloc, MeState>(
+          listener: (context, state) {
+            if (state.status == MeStatus.error) {
+              context.showSnackBar(
+                "${localizations.error}: ${state.errorMessage}",
+                isError: true,
+              );
+            }
+
+            if (state.logoutStatus == LogoutStatus.success) {
+              Navigator.of(
+                // ignore: use_build_context_synchronously
+                context,
+              ).pushReplacement(
+                AppTransitions.createSlideRoute(const LoginPage()),
+              );
+            } else if (state.logoutStatus == LogoutStatus.error) {
+              context.showSnackBar(
+                "${localizations.logoutFailed}: ${state.errorMessage}",
+                isError: true,
+              );
+            }
+          },
+          builder: (context, state) {
+            return Scaffold(
+              appBar: AppBar(
+                title: Text(localizations.me),
+                actions: [
+                  IconButton(
+                    onPressed: () {
+                      context.read<LoginBloc>().add(
+                        const LoadStoredCredentials(),
+                      );
+                      context.read<LoginBloc>().add(const LoadSavedAccounts());
+                      _showAccountModalBottomSheet(context, localizations);
+                    },
+                    icon: const Icon(Icons.account_circle),
+                    tooltip: localizations.account,
+                  ),
+                ],
+              ),
+              body: RefreshIndicator(
+                onRefresh: () async {
+                  context.read<MeBloc>().add(const LoadStats());
+                  return;
+                },
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  child: Column(
+                    children: [
+                      if (state.showStats)
+                        StatsCard(
+                          stats: state.stats ?? const StatsModel(),
+                          isLoading: state.status == MeStatus.loading,
+                          errorMessage:
+                              state.status == MeStatus.error
+                                  ? state.errorMessage
+                                  : null,
+                          onRetry:
+                              () =>
+                                  context.read<MeBloc>().add(const LoadStats()),
+                          isOpds: state.isOpds,
+                        ),
+                      LongButton(
+                        text: localizations.settings,
+                        icon: Icons.settings_rounded,
+                        onPressed:
+                            () => Navigator.of(context).push(
+                              AppTransitions.createSlideRoute(SettingsPage()),
+                            ),
+                      ),
+                      if (!state.isOpds)
+                        LongButton(
+                          text: localizations.shelfs,
+                          icon: Icons.list_rounded,
+                          onPressed:
+                              () => Navigator.of(context).push(
+                                AppTransitions.createSlideRoute(
+                                  ShelfViewPage(),
+                                ),
+                              ),
+                        ),
+
+                      if (!state.isOpds) ...[
+                        LongButton(
+                          text: localizations.showReadBooks,
+                          icon: Icons.my_library_books_rounded,
+                          onPressed:
+                              () => Navigator.of(context).push(
+                                AppTransitions.createSlideRoute(
+                                  DiscoverDetailsPage(
+                                    title: localizations.readBooks,
+                                    discoverType: DiscoverType.readbooks,
+                                    fullPath: "/opds/readbooks",
+                                  ),
+                                ),
+                              ),
+                        ),
+                        LongButton(
+                          text: localizations.showUnReadBooks,
+                          icon: Icons.read_more_rounded,
+                          onPressed:
+                              () => Navigator.of(context).push(
+                                AppTransitions.createSlideRoute(
+                                  DiscoverDetailsPage(
+                                    title: localizations.unreadBooks,
+                                    discoverType: DiscoverType.unreadbooks,
+                                    fullPath: "/opds/unreadbooks",
+                                  ),
+                                ),
+                              ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showAccountModalBottomSheet(
+    BuildContext context,
+    AppLocalizations localizations,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return BlocBuilder<LoginBloc, LoginState>(
+          builder: (innerContext, state) {
+            final currentUsernameDisplay =
+                state.username.isNotEmpty ? state.username : localizations.user;
+            final currentUrl = state.url;
+
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16.0),
+                    child: Text(
+                      localizations.accounts,
+                      style: Theme.of(innerContext).textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: state.savedAccounts.length,
+                      itemBuilder: (listContext, index) {
+                        final account = state.savedAccounts[index];
+                        final isCurrent =
+                            account.baseUrl == state.url &&
+                            account.username == state.username;
+                        final firstLetter =
+                            account.username.isNotEmpty
+                                ? account.username[0].toUpperCase()
+                                : localizations.userFirstLetter;
+
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor:
+                                isCurrent
+                                    ? Theme.of(innerContext).colorScheme.primary
+                                    : Theme.of(
+                                      innerContext,
+                                    ).colorScheme.surfaceContainerHighest,
+                            foregroundColor:
+                                isCurrent
+                                    ? Theme.of(
+                                      innerContext,
+                                    ).colorScheme.onPrimary
+                                    : Theme.of(
+                                      innerContext,
+                                    ).colorScheme.onSurfaceVariant,
+                            child: Text(firstLetter),
+                          ),
+                          title: Text(
+                            account.username.isEmpty
+                                ? localizations.user
+                                : account.username,
+                            style: TextStyle(
+                              fontWeight:
+                                  isCurrent
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                            ),
+                          ),
+                          subtitle: Text(
+                            account.baseUrl,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing:
+                              isCurrent
+                                  ? IconButton(
+                                    onPressed: null,
+                                    icon: Icon(
+                                      Icons.check_circle,
+                                      color:
+                                          Theme.of(
+                                            innerContext,
+                                          ).colorScheme.primary,
+                                    ),
+                                  )
+                                  : IconButton(
+                                    icon: const Icon(Icons.delete_outline),
+                                    onPressed: () {
+                                      _showDeleteAccountDialog(
+                                        context,
+                                        account,
+                                        localizations,
+                                      );
+                                    },
+                                  ),
+                          onTap: () {
+                            if (!isCurrent) {
+                              _showSwitchAccountDialog(
+                                sheetContext,
+                                context,
+                                account,
+                                localizations,
+                              );
+                            }
+                          },
+                        );
+                      },
+                    ),
+                  ),
+
+                  if (state.savedAccounts.isEmpty) ...[
+                    ListTile(
+                      leading: CircleAvatar(
+                        child: Text(localizations.userFirstLetter),
+                      ),
+                      title: Text(currentUsernameDisplay),
+                      subtitle: Text(currentUrl),
+                      trailing: Icon(
+                        Icons.check_circle,
+                        color: Theme.of(innerContext).colorScheme.primary,
+                      ),
+                    ),
+                  ],
+
+                  const Divider(thickness: 1, height: 32),
+
+                  ListTile(
+                    leading: const Icon(Icons.person_add_alt_1_rounded),
+                    title: Text(localizations.addAnotherAccount),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _performLogout(context);
+                    },
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      Icons.logout_rounded,
+                      color: Theme.of(innerContext).colorScheme.error,
+                    ),
+                    title: Text(
+                      localizations.logout,
+                      style: TextStyle(
+                        color: Theme.of(innerContext).colorScheme.error,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _showLogOutDialog(context, localizations);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showSwitchAccountDialog(
+    BuildContext sheetContext,
+    BuildContext context,
+    dynamic account,
+    AppLocalizations localizations,
+  ) {
+    final username =
+        account.username.isNotEmpty ? account.username : localizations.user;
+
+    showDialog(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: Text(localizations.switchAccount),
+            content: Text(localizations.switchAccountConfirmation(username)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(localizations.cancel),
+              ),
+              AppDialogButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  Navigator.of(sheetContext).pop();
+
+                  context.read<LoginBloc>().add(SwitchAccount(account));
+                },
+                label: localizations.switchAccount,
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _showDeleteAccountDialog(
+    BuildContext context,
+    dynamic account,
+    AppLocalizations localizations,
+  ) {
+    showDialog(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: Text(localizations.deleteAccount),
+            content: Text(localizations.deleteAccountConfirmation),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(localizations.cancel),
+              ),
+              AppDialogButton.destructive(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  context.read<LoginBloc>().add(DeleteAccount(account));
+                },
+                label: localizations.delete,
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _performLogout(BuildContext context) {
+    context.read<LoginBloc>().add(const LoginLogOut());
+    context.read<MeBloc>().add(const LogOut());
+  }
+
+  void _showLogOutDialog(BuildContext context, AppLocalizations localizations) {
+    showDialog(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: Text(localizations.logout),
+            content: Text(localizations.logoutConfirmation),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(localizations.cancel),
+              ),
+              AppDialogButton.destructive(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  _performLogout(context);
+                },
+                label: localizations.logout,
+              ),
+            ],
+          ),
+    );
+  }
+}

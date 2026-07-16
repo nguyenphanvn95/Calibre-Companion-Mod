@@ -1,0 +1,51 @@
+PODS:
+  - Flutter (1.0.0)
+  - flutter_inappwebview_ios (0.0.1):
+    - Flutter
+    - flutter_inappwebview_ios/Core (= 0.0.1)
+    - OrderedSet (~> 6.0.3)
+  - flutter_inappwebview_ios/Core (0.0.1):
+    - Flutter
+    - OrderedSet (~> 6.0.3)
+  - fluttertoast (0.0.2):
+    - Flutter
+  - isar_community_flutter_libs (1.0.0):
+    - Flutter
+  - OrderedSet (6.0.3)
+  - screen_brightness_ios (0.1.0):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - flutter_inappwebview_ios (from `.symlinks/plugins/flutter_inappwebview_ios/ios`)
+  - fluttertoast (from `.symlinks/plugins/fluttertoast/ios`)
+  - isar_community_flutter_libs (from `.symlinks/plugins/isar_community_flutter_libs/ios`)
+  - screen_brightness_ios (from `.symlinks/plugins/screen_brightness_ios/ios`)
+
+SPEC REPOS:
+  trunk:
+    - OrderedSet
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  flutter_inappwebview_ios:
+    :path: ".symlinks/plugins/flutter_inappwebview_ios/ios"
+  fluttertoast:
+    :path: ".symlinks/plugins/fluttertoast/ios"
+  isar_community_flutter_libs:
+    :path: ".symlinks/plugins/isar_community_flutter_libs/ios"
+  screen_brightness_ios:
+    :path: ".symlinks/plugins/screen_brightness_ios/ios"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_inappwebview_ios: b89ba3482b96fb25e00c967aae065701b66e9b99
+  fluttertoast: 2c67e14dce98bbdb200df9e1acf610d7a6264ea1
+  isar_community_flutter_libs: bede843185a61a05ff364a05c9b23209523f7e0d
+  OrderedSet: e539b66b644ff081c73a262d24ad552a69be3a94
+  screen_brightness_ios: 28c5fbdb40634de44f86025d84470158ad4df48c
+
+PODFILE CHECKSUM: 3c63482e143d1b91d2d2560aee9fb04ecc74ac7e
+
+COCOAPODS: 1.16.2

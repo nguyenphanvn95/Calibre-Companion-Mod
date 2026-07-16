@@ -1,0 +1,444 @@
+import 'package:adaptive_theme/adaptive_theme.dart';
+import 'dart:async';
+import 'dart:ui';
+import 'package:dynamic_color/dynamic_color.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:get_it/get_it.dart';
+import 'package:logger/web.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:skeletonizer/skeletonizer.dart';
+
+import 'package:cosmos_epub/cosmos_epub.dart';
+
+import 'package:calibre_web_companion/l10n/app_localizations.dart';
+import 'package:calibre_web_companion/core/di/injection_container.dart' as di;
+import 'package:calibre_web_companion/core/services/api_service.dart';
+import 'package:calibre_web_companion/core/services/app_transition.dart';
+import 'package:calibre_web_companion/core/services/connectivity_service.dart';
+import 'package:calibre_web_companion/core/services/widget_service.dart';
+import 'package:calibre_web_companion/core/services/download_manager.dart';
+import 'package:calibre_web_companion/core/services/app_log_service.dart';
+import 'package:calibre_web_companion/features/book_details/bloc/book_details_bloc.dart';
+import 'package:calibre_web_companion/features/book_details/presentation/pages/book_details_page.dart';
+import 'package:calibre_web_companion/features/book_view/data/models/book_view_model.dart';
+import 'package:calibre_web_companion/features/login/data/datasources/login_remote_datasource.dart';
+import 'package:calibre_web_companion/features/settings/bloc/settings_state.dart';
+import 'package:calibre_web_companion/features/book_view/bloc/book_view_bloc.dart';
+import 'package:calibre_web_companion/features/book_view/bloc/book_view_event.dart';
+import 'package:calibre_web_companion/features/discover/blocs/discover_bloc.dart';
+import 'package:calibre_web_companion/features/discover_details/bloc/discover_details_bloc.dart';
+import 'package:calibre_web_companion/features/download_service/bloc/download_service_bloc.dart';
+import 'package:calibre_web_companion/features/book_view/presentation/widgets/search_dialog.dart';
+import 'package:calibre_web_companion/features/download_service/bloc/download_service_event.dart'
+    hide SearchBooks;
+import 'package:calibre_web_companion/features/homepage/bloc/homepage_bloc.dart';
+import 'package:calibre_web_companion/features/homepage/bloc/homepage_event.dart';
+import 'package:calibre_web_companion/features/scan_book/presentation/pages/scan_book_page.dart';
+import 'package:calibre_web_companion/features/offline/cubit/connectivity_cubit.dart';
+import 'package:calibre_web_companion/features/homepage/presentation/pages/home_page.dart';
+import 'package:calibre_web_companion/features/login_settings/bloc/login_settings_event.dart';
+import 'package:calibre_web_companion/features/me/bloc/me_bloc.dart';
+import 'package:calibre_web_companion/features/settings/bloc/settings_bloc.dart';
+import 'package:calibre_web_companion/features/settings/data/models/theme_source.dart';
+import 'package:calibre_web_companion/features/shelf_details/bloc/shelf_details_bloc.dart';
+import 'package:calibre_web_companion/features/shelf_view.dart/bloc/shelf_view_bloc.dart';
+import 'package:calibre_web_companion/features/shelf_view.dart/bloc/shelf_view_event.dart';
+import 'package:calibre_web_companion/features/settings/bloc/settings_event.dart';
+import 'package:calibre_web_companion/features/login/data/repositories/login_repository.dart';
+import 'package:calibre_web_companion/features/login/bloc/login_bloc.dart';
+import 'package:calibre_web_companion/features/login/presentation/pages/login_page.dart';
+import 'package:calibre_web_companion/features/login_settings/bloc/login_settings_bloc.dart';
+import 'package:calibre_web_companion/features/sync/bloc/sync_bloc.dart';
+import 'package:calibre_web_companion/features/sync/bloc/sync_event.dart';
+
+final navigatorKey = GlobalKey<NavigatorState>();
+final GetIt getIt = GetIt.instance;
+
+void main() async {
+  AppLogService? appLogService;
+
+  runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+
+      await di.init();
+
+      appLogService = di.getIt<AppLogService>();
+
+      FlutterError.onError = (FlutterErrorDetails details) {
+        FlutterError.presentError(details);
+        appLogService?.add(
+          'FlutterError: ${details.exceptionAsString()}\n${details.stack ?? ''}',
+        );
+      };
+
+      PlatformDispatcher.instance.onError = (error, stack) {
+        appLogService?.add('Uncaught error: $error\n$stack');
+        return false;
+      };
+
+      await di.getIt<DownloadManager>().initialize();
+
+      await di.getIt<ApiService>().initialize();
+
+      await di.getIt<WidgetService>().registerBackgroundCallback();
+
+      await CosmosEpub.initialize();
+
+      final savedThemeMode = await AdaptiveTheme.getThemeMode();
+
+      runApp(
+        MultiBlocProvider(
+          providers: [
+            BlocProvider<LoginBloc>(create: (_) => getIt<LoginBloc>()),
+            BlocProvider<LoginSettingsBloc>(
+              create:
+                  (_) =>
+                      getIt<LoginSettingsBloc>()
+                        ..add(const LoadLoginSettings()),
+            ),
+            BlocProvider<BookViewBloc>(
+              create:
+                  (_) => getIt<BookViewBloc>()..add(const LoadViewSettings()),
+            ),
+            BlocProvider<MeBloc>(create: (_) => getIt<MeBloc>()),
+            BlocProvider<DiscoverBloc>(create: (_) => getIt<DiscoverBloc>()),
+            BlocProvider<DiscoverDetailsBloc>(
+              create: (_) => getIt<DiscoverDetailsBloc>(),
+            ),
+            BlocProvider<ShelfViewBloc>(
+              create: (_) => getIt<ShelfViewBloc>()..add(const LoadShelves()),
+            ),
+            BlocProvider<ShelfDetailsBloc>(
+              create: (_) => getIt<ShelfDetailsBloc>(),
+            ),
+            BlocProvider<SettingsBloc>(
+              create: (_) => getIt<SettingsBloc>()..add(LoadSettings()),
+            ),
+            BlocProvider<DownloadServiceBloc>(
+              create:
+                  (_) => getIt<DownloadServiceBloc>()..add(LoadSavedFilter()),
+            ),
+            BlocProvider<HomePageBloc>(create: (_) => getIt<HomePageBloc>()),
+            BlocProvider<BookDetailsBloc>(
+              create: (_) => di.getIt<BookDetailsBloc>(),
+            ),
+            BlocProvider<BookViewBloc>(
+              create:
+                  (_) =>
+                      getIt<BookViewBloc>()
+                        ..add(const LoadViewSettings())
+                        ..add(const LoadBooks()),
+            ),
+            BlocProvider<SyncBloc>(
+              create:
+                  (_) => getIt<SyncBloc>()..add(const CheckForUnsyncedBooks()),
+            ),
+            BlocProvider<ConnectivityCubit>(
+              create: (_) => getIt<ConnectivityCubit>(),
+            ),
+          ],
+          child: MyApp(savedThemeMode: savedThemeMode),
+        ),
+      );
+    },
+    (error, stack) {
+      appLogService?.add('Zoned error: $error\n$stack');
+    },
+    zoneSpecification: ZoneSpecification(
+      print: (self, parent, zone, line) {
+        appLogService?.add('print: $line');
+        parent.print(zone, line);
+      },
+    ),
+  );
+}
+
+final RouteObserver<PageRoute> routeObserver = RouteObserver<PageRoute>();
+
+class MyApp extends StatefulWidget {
+  final AdaptiveThemeMode? savedThemeMode;
+
+  const MyApp({super.key, this.savedThemeMode});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  late final Future<bool> _loginFuture = _isLoggedIn();
+  StreamSubscription<Uri?>? _widgetClickSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupWidgetLaunch();
+  }
+
+  @override
+  void dispose() {
+    _widgetClickSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+  }
+
+  void _setupWidgetLaunch() {
+    final widgetService = getIt<WidgetService>();
+    _widgetClickSub = widgetService.widgetClicks.listen(_handleWidgetLaunch);
+    widgetService.initialWidgetLaunch().then(_handleWidgetLaunch);
+
+    widgetService.pushQuickActions();
+    widgetService.refreshShelf();
+  }
+
+  Future<void> _handleWidgetLaunch(Uri? uri) async {
+    if (uri == null || uri.scheme != 'calibrewebcompanion') return;
+
+    if (uri.pathSegments.contains('stats') ||
+        uri.pathSegments.contains('shelf')) {
+      return;
+    }
+
+    if (uri.pathSegments.contains('action')) {
+      await _handleWidgetAction(uri.queryParameters['do'] ?? '');
+      return;
+    }
+
+    final widgetService = getIt<WidgetService>();
+
+    if (uri.pathSegments.contains('book')) {
+      final uuid = uri.queryParameters['uuid'] ?? '';
+      if (uuid.isEmpty) return;
+
+      final matches = widgetService.shelfBooks.where((b) => b.uuid == uuid);
+      if (matches.isEmpty) return;
+      final book = matches.first;
+
+      await _openWidgetBook(
+        BookViewModel(
+          id: book.id,
+          uuid: book.uuid,
+          title: book.title,
+          authors: book.authors,
+          coverUrl: book.coverUrl.isEmpty ? null : book.coverUrl,
+          formats: [book.format],
+        ),
+      );
+      return;
+    }
+
+    await _openCurrentWidgetBook();
+  }
+
+  Future<void> _openCurrentWidgetBook() async {
+    final raw = getIt<WidgetService>().currentBookRaw;
+    if (raw == null) return;
+
+    final coverUrl = raw['coverUrl']?.toString() ?? '';
+    await _openWidgetBook(
+      BookViewModel(
+        id: (raw['id'] as num?)?.toInt() ?? 0,
+        uuid: raw['uuid']?.toString() ?? '',
+        title: raw['title']?.toString() ?? '',
+        authors: raw['authors']?.toString() ?? '',
+        coverUrl: coverUrl.isEmpty ? null : coverUrl,
+        formats: [raw['format']?.toString() ?? 'epub'],
+      ),
+    );
+  }
+
+  Future<void> _openWidgetBook(BookViewModel book) async {
+    final target = getIt<WidgetService>().tapTarget;
+    if (target == WidgetTapTarget.appOnly) return;
+    if (book.uuid.isEmpty) return;
+
+    final prefs = getIt<SharedPreferences>();
+    if ((prefs.getString('base_url') ?? '').isEmpty) return;
+
+    final autoOpen = switch (target) {
+      WidgetTapTarget.internalReader => BookAutoOpen.internalReader,
+      WidgetTapTarget.externalReader => BookAutoOpen.externalReader,
+      _ => BookAutoOpen.none,
+    };
+
+    final navigator = await _waitForNavigator();
+    navigator?.push(
+      AppTransitions.createSlideRoute(
+        BookDetailsPage(
+          bookViewModel: book,
+          bookUuid: book.uuid,
+          autoOpenAction: autoOpen,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleWidgetAction(String action) async {
+    if (action == 'read') {
+      await _openCurrentWidgetBook();
+      return;
+    }
+
+    final navigator = await _waitForNavigator();
+    final context = navigatorKey.currentContext;
+    if (navigator == null || context == null || !context.mounted) return;
+
+    switch (action) {
+      case 'search':
+        context.read<HomePageBloc>().add(const ChangeNavIndex(0));
+        final query = await showDialog<String>(
+          context: context,
+          builder: (_) => const SearchDialog(),
+        );
+        if (query != null && context.mounted) {
+          context.read<BookViewBloc>().add(SearchBooks(query));
+        }
+      case 'scan':
+        final added = await navigator.push<bool>(
+          AppTransitions.createSlideRoute(const ScanBookPage()),
+        );
+        if (added == true && context.mounted) {
+          context.read<BookViewBloc>().add(const RefreshBooks());
+        }
+      case 'downloads':
+        final showsDiscover =
+            getIt<SharedPreferences>().getString('server_type') != 'calibre';
+        context.read<HomePageBloc>().add(ChangeNavIndex(showsDiscover ? 3 : 2));
+    }
+  }
+
+  Future<NavigatorState?> _waitForNavigator() async {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      final navigator = navigatorKey.currentState;
+      if (navigator != null) return navigator;
+      await Future.delayed(const Duration(milliseconds: 150));
+    }
+    return null;
+  }
+
+  Future<bool> _isLoggedIn() async {
+    final prefs = getIt<SharedPreferences>();
+    final baseUrl = prefs.getString('base_url');
+    final hasAccount = baseUrl != null && baseUrl.isNotEmpty;
+
+    if (hasAccount && !await getIt<ConnectivityService>().hasNetwork()) {
+      return true;
+    }
+
+    return await LoginRepository(
+      dataSource: getIt<LoginRemoteDataSource>(),
+      logger: getIt<Logger>(),
+    ).isLoggedIn();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<SettingsBloc, SettingsState>(
+      buildWhen:
+          (previous, current) =>
+              previous.themeMode != current.themeMode ||
+              previous.themeSource != current.themeSource ||
+              previous.selectedColorKey != current.selectedColorKey ||
+              previous.languageCode != current.languageCode ||
+              previous.isEInkMode != current.isEInkMode ||
+              previous.textScale != current.textScale,
+
+      builder: (context, settingsState) {
+        return DynamicColorBuilder(
+          builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
+            final seedColor =
+                settingsState.themeSource == ThemeSource.custom
+                    ? settingsState.selectedColor
+                    : Colors.lightGreen;
+
+            final lightScheme =
+                settingsState.themeSource == ThemeSource.system &&
+                        lightDynamic != null
+                    ? lightDynamic
+                    : ColorScheme.fromSeed(
+                      seedColor: seedColor,
+                      brightness: Brightness.light,
+                    );
+
+            final darkScheme =
+                settingsState.themeSource == ThemeSource.system &&
+                        darkDynamic != null
+                    ? darkDynamic
+                    : ColorScheme.fromSeed(
+                      seedColor: seedColor,
+                      brightness: Brightness.dark,
+                    );
+
+            final lightTheme = ThemeData(
+              useMaterial3: true,
+              colorScheme: lightScheme,
+            );
+
+            final darkTheme = ThemeData(
+              useMaterial3: true,
+              colorScheme: darkScheme,
+            );
+
+            return SkeletonizerConfig(
+              data: SkeletonizerConfigData(
+                effect:
+                    settingsState.isEInkMode
+                        ? const SolidColorEffect()
+                        : const ShimmerEffect(),
+              ),
+              child: MaterialApp(
+                title: 'Calibre-Web-Companion',
+                theme: lightTheme,
+                darkTheme: darkTheme,
+                themeMode: settingsState.themeMode,
+                navigatorKey: navigatorKey,
+                navigatorObservers: [routeObserver],
+                builder: (context, child) {
+                  final mediaQuery = MediaQuery.of(context);
+                  return MediaQuery(
+                    data: mediaQuery.copyWith(
+                      textScaler: TextScaler.linear(settingsState.textScale),
+                    ),
+                    child: child ?? const SizedBox.shrink(),
+                  );
+                },
+                localizationsDelegates: AppLocalizations.localizationsDelegates,
+                supportedLocales: AppLocalizations.supportedLocales,
+                locale: Locale(settingsState.languageCode ?? 'en'),
+                debugShowCheckedModeBanner: false,
+                localeResolutionCallback: (locale, supportedLocales) {
+                  if (locale != null) {
+                    for (final supportedLocale in supportedLocales) {
+                      if (supportedLocale.languageCode == locale.languageCode) {
+                        return supportedLocale;
+                      }
+                    }
+                  }
+                  return const Locale('en');
+                },
+                home: FutureBuilder<bool>(
+                  future: _loginFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Scaffold(
+                        body: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+
+                    final isLoggedIn = snapshot.data ?? false;
+                    return isLoggedIn ? const HomePage() : const LoginPage();
+                  },
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
