@@ -44,6 +44,14 @@ class BookViewRemoteDatasource {
           limit: limit,
           searchQuery: searchQuery,
         );
+      } else if (serverType == 'gdrive_json') {
+        return _fetchBooksGdriveJson(
+          offset: offset,
+          limit: limit,
+          searchQuery: searchQuery,
+          sortBy: sortBy,
+          sortOrder: sortOrder,
+        );
       } else if (serverType == 'opds') {
         return _fetchBooksOpds();
       } else if (serverType == 'calibre') {
@@ -131,6 +139,60 @@ class BookViewRemoteDatasource {
     } catch (e) {
       _logger.e('Error fetching OPDS books: $e');
       throw Exception('Failed to load OPDS books: $e');
+    }
+  }
+
+  /// Unlike plain `opds`, the embedded GDrive JSON server's root feed
+  /// understands `offset`/`limit`/`search`/`sort`/`order` (backed by
+  /// `GDriveLibraryCache.queryBooks`), so this gets real server-side
+  /// pagination/search/sort instead of always fetching everything.
+  Future<List<BookViewModel>> _fetchBooksGdriveJson({
+    required int offset,
+    required int limit,
+    String? searchQuery,
+    String sortBy = '',
+    String sortOrder = '',
+  }) async {
+    try {
+      final queryParams = <String, String>{
+        'offset': offset.toString(),
+        'limit': limit.toString(),
+      };
+      if (sortBy.isNotEmpty) queryParams['sort'] = sortBy;
+      if (sortOrder.isNotEmpty) queryParams['order'] = sortOrder;
+      if (searchQuery != null && searchQuery.isNotEmpty) {
+        queryParams['search'] = searchQuery;
+      }
+
+      final response = await _apiService.getXmlAsJson(
+        endpoint: '',
+        authMethod: AuthMethod.none,
+        queryParams: queryParams,
+      );
+
+      List<BookViewModel> books = [];
+
+      if (response.containsKey('feed') && response['feed'] != null) {
+        final feed = response['feed'];
+        if (feed.containsKey('entry')) {
+          final entries = feed['entry'];
+          if (entries is List) {
+            for (var entry in entries) {
+              final book = _mapOpdsEntryToViewModel(entry);
+              if (book != null) books.add(book);
+            }
+          } else if (entries is Map) {
+            final book = _mapOpdsEntryToViewModel(entries);
+            if (book != null) books.add(book);
+          }
+        }
+      }
+
+      _logger.i('Parsed ${books.length} GDrive JSON books');
+      return books;
+    } catch (e) {
+      _logger.e('Error fetching GDrive JSON books: $e');
+      throw Exception('Failed to load GDrive JSON books: $e');
     }
   }
 
@@ -600,6 +662,7 @@ class BookViewRemoteDatasource {
   bool getIsOpds() {
     return _preferences.getString('server_type') == 'opds' ||
         _preferences.getString('server_type') == 'grimmory' ||
-        _preferences.getString('server_type') == 'booklore';
+        _preferences.getString('server_type') == 'booklore' ||
+        _preferences.getString('server_type') == 'gdrive_json';
   }
 }

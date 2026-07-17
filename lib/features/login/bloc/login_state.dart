@@ -5,7 +5,8 @@ enum ServerType {
   calibreWeb,
   calibre,
   booklore,
-  opds;
+  opds,
+  gdriveJson;
 
   String get label {
     switch (this) {
@@ -17,6 +18,8 @@ enum ServerType {
         return 'Grimmory';
       case ServerType.opds:
         return 'OPDS';
+      case ServerType.gdriveJson:
+        return 'GDrive JSON';
     }
   }
 }

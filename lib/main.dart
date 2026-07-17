@@ -14,6 +14,7 @@ import 'package:cosmos_epub/cosmos_epub.dart';
 import 'package:calibre_web_companion/l10n/app_localizations.dart';
 import 'package:calibre_web_companion/core/di/injection_container.dart' as di;
 import 'package:calibre_web_companion/core/services/api_service.dart';
+import 'package:calibre_web_companion/core/services/gdrive_local_server.dart';
 import 'package:calibre_web_companion/core/services/app_transition.dart';
 import 'package:calibre_web_companion/core/services/connectivity_service.dart';
 import 'package:calibre_web_companion/core/services/widget_service.dart';
@@ -79,6 +80,8 @@ void main() async {
       };
 
       await di.getIt<DownloadManager>().initialize();
+
+      await _restartGdriveLocalServerIfNeeded();
 
       await di.getIt<ApiService>().initialize();
 
@@ -153,6 +156,28 @@ void main() async {
       },
     ),
   );
+}
+
+/// The embedded local server backing `server_type == 'gdrive_json'` binds to
+/// an OS-assigned port that only exists for the lifetime of the previous
+/// process, so on every app launch it needs to be restarted (re-serving the
+/// cached library, or re-downloading it if stale) *before* [ApiService]
+/// reads `base_url` from prefs - otherwise the app would try to talk to a
+/// port nothing is listening on anymore.
+Future<void> _restartGdriveLocalServerIfNeeded() async {
+  final prefs = di.getIt<SharedPreferences>();
+  if (prefs.getString('server_type') != 'gdrive_json') return;
+
+  final fileId = prefs.getString('gdrive_source_file_id');
+  if (fileId == null || fileId.isEmpty) return;
+
+  try {
+    final port = await GDriveLocalServer().start(driveFileId: fileId);
+    await prefs.setString('base_url', 'http://127.0.0.1:$port');
+  } catch (e) {
+    // Leave base_url as-is; LoginRepository.isLoggedIn() will surface the
+    // failure (and retry) the first time a screen actually needs data.
+  }
 }
 
 final RouteObserver<PageRoute> routeObserver = RouteObserver<PageRoute>();

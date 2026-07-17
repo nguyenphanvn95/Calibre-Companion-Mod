@@ -43,7 +43,8 @@ class BookDetailsRemoteDatasource {
       final isOpds =
           serverType == 'opds' ||
           serverType == 'grimmory' ||
-          serverType == 'booklore';
+          serverType == 'booklore' ||
+          serverType == 'gdrive_json';
 
       if (serverType == 'calibre') {
         return _fetchCalibreBookDetails(bookListModel, prefs);
@@ -330,7 +331,8 @@ class BookDetailsRemoteDatasource {
       final isOpds =
           serverType == 'opds' ||
           serverType == 'grimmory' ||
-          serverType == 'booklore';
+          serverType == 'booklore' ||
+          serverType == 'gdrive_json';
 
       String endpoint;
       AuthMethod authMethod;

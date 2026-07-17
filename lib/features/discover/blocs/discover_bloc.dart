@@ -21,7 +21,8 @@ class DiscoverBloc extends Bloc<DiscoverEvent, DiscoverState> {
     final isOpds =
         serverType == 'opds' ||
         serverType == 'grimmory' ||
-        serverType == 'booklore';
+        serverType == 'booklore' ||
+        serverType == 'gdrive_json';
 
     final hasDiscover = serverType != 'calibre';
     emit(state.copyWith(isOpds: isOpds, hasDiscover: hasDiscover));

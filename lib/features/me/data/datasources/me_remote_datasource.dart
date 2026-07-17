@@ -1,6 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:calibre_web_companion/core/services/api_service.dart';
+import 'package:calibre_web_companion/features/gdrive_library/data/local/gdrive_library_cache.dart';
 import 'package:calibre_web_companion/features/me/data/models/stats_model.dart';
 
 class MeRemoteDataSource {
@@ -12,6 +13,13 @@ class MeRemoteDataSource {
   Future<StatsModel> getStats() async {
     try {
       final serverType = preferences.getString('server_type');
+
+      if (serverType == 'gdrive_json') {
+        // Answered straight from the local cache - the local server has no
+        // /catalog OPDS-search endpoint to derive this from remotely.
+        final count = await GDriveLibraryCache().countBooks();
+        return StatsModel(books: count);
+      }
 
       if (serverType == 'opds' ||
           serverType == 'grimmory' ||
@@ -96,6 +104,7 @@ class MeRemoteDataSource {
     return preferences.getString('server_type') == 'opds' ||
         preferences.getString('server_type') == 'grimmory' ||
         preferences.getString('server_type') == 'booklore' ||
+        preferences.getString('server_type') == 'gdrive_json' ||
         preferences.getString('server_type') == 'calibre';
   }
 }

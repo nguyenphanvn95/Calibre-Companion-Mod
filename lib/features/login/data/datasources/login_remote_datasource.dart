@@ -4,6 +4,8 @@ import 'package:logger/logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:calibre_web_companion/core/services/api_service.dart';
+import 'package:calibre_web_companion/core/services/gdrive_local_server.dart';
+import 'package:calibre_web_companion/core/services/gdrive_public_file_service.dart';
 import 'package:calibre_web_companion/core/exceptions/redirect_exception.dart';
 import 'package:calibre_web_companion/features/login/data/models/login_credentials.dart';
 import 'package:calibre_web_companion/features/login/bloc/login_state.dart';
@@ -14,14 +16,28 @@ class LoginRemoteDataSource {
 
   LoginRemoteDataSource({required this.apiService, required this.logger});
 
+  /// `ServerType.name` is camelCase (`gdriveJson`), but every other check in
+  /// the app compares against the snake_case string stored in
+  /// SharedPreferences (`gdrive_json`), same as the existing
+  /// booklore -> 'grimmory' special case below.
+  String _storedServerTypeName(ServerType type) {
+    switch (type) {
+      case ServerType.booklore:
+        return 'grimmory';
+      case ServerType.gdriveJson:
+        return 'gdrive_json';
+      default:
+        return type.name;
+    }
+  }
+
   Future<bool> login(
     LoginCredentials credentials,
     ServerType serverType,
   ) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final storedServerType =
-          serverType == ServerType.booklore ? 'grimmory' : serverType.name;
+      final storedServerType = _storedServerTypeName(serverType);
 
       await prefs.setString('base_url', credentials.baseUrl);
       await prefs.setString('username', credentials.username);
@@ -30,7 +46,9 @@ class LoginRemoteDataSource {
 
       bool isLoggedIn = false;
 
-      if (serverType == ServerType.calibre) {
+      if (serverType == ServerType.gdriveJson) {
+        isLoggedIn = await _loginGdriveJson(credentials, prefs);
+      } else if (serverType == ServerType.calibre) {
         await apiService.initialize();
         isLoggedIn = await _loginCalibre(credentials);
       } else if (serverType == ServerType.opds ||
@@ -66,10 +84,46 @@ class LoginRemoteDataSource {
       return isLoggedIn;
     } on RedirectException {
       rethrow;
+    } on GDriveFileException catch (e) {
+      logger.e('Error during GDrive JSON login: ${e.message}');
+      throw Exception(e.message);
     } catch (e) {
       logger.e("Error during login: $e");
       throw Exception('Connection error: ${e.toString().split(': ').last}');
     }
+  }
+
+  /// For `gdrive_json`, `credentials.baseUrl` actually carries the raw
+  /// Google Drive file id (or share link) the user typed in - there's no
+  /// real server URL to log in to. Starting the embedded local server *is*
+  /// the "login": once it's serving the Atom feed on 127.0.0.1, `base_url`
+  /// is repointed at it so every other datasource keeps working unmodified.
+  Future<bool> _loginGdriveJson(
+    LoginCredentials credentials,
+    SharedPreferences prefs,
+  ) async {
+    logger.i('Starting GDrive JSON local server...');
+
+    final fileId = GDrivePublicFileService.extractFileId(credentials.baseUrl);
+    if (fileId == null) {
+      throw Exception(
+        'Invalid Google Drive file id or share link for metadata_public.json',
+      );
+    }
+
+    final server = GDriveLocalServer();
+    final port = await server.start(driveFileId: fileId);
+
+    await prefs.setString('gdrive_source_file_id', fileId);
+    await prefs.setString('base_url', 'http://127.0.0.1:$port');
+    // gdrive_json needs no username/password/cookie.
+    await prefs.remove('username');
+    await prefs.remove('password');
+
+    await apiService.initialize();
+
+    logger.i('GDrive JSON local server ready on port $port');
+    return true;
   }
 
   Future<bool> _loginOpds(LoginCredentials credentials, String endpoint) async {
@@ -232,6 +286,29 @@ class LoginRemoteDataSource {
     final baseUrl = prefs.getString('base_url');
     final serverType = await getStoredServerType();
 
+    if (serverType == ServerType.gdriveJson) {
+      final fileId = prefs.getString('gdrive_source_file_id');
+      if (fileId == null || fileId.isEmpty) {
+        logger.w('No saved GDrive source file id.');
+        return false;
+      }
+
+      try {
+        // start() only hits the network if the cache is empty or was built
+        // from a different file id, so this also covers the offline case
+        // (re-serves whatever was cached from the last successful sync).
+        final server = GDriveLocalServer();
+        final port = await server.start(driveFileId: fileId);
+        await prefs.setString('base_url', 'http://127.0.0.1:$port');
+        await apiService.initialize();
+        logger.i('GDrive JSON local server restarted on port $port.');
+        return true;
+      } catch (e) {
+        logger.w('Could not restart GDrive JSON local server: $e');
+        return false;
+      }
+    }
+
     if (serverType == ServerType.booklore) {
       final response = await apiService.get(
         endpoint: '/catalog',
@@ -362,7 +439,7 @@ class LoginRemoteDataSource {
     });
 
     final entry = credentials.toJson();
-    entry['serverType'] = type == ServerType.booklore ? 'grimmory' : type.name;
+    entry['serverType'] = _storedServerTypeName(type);
 
     history.insert(0, jsonEncode(entry));
 
@@ -457,6 +534,10 @@ class LoginRemoteDataSource {
     String url,
     ServerType serverType,
   ) async {
+    if (serverType == ServerType.gdriveJson) {
+      return _probeGdriveFileId(url);
+    }
+
     final trimmed = url.trim();
     final afterScheme = trimmed.replaceFirst(RegExp(r'^https?://'), '');
 
@@ -482,6 +563,9 @@ class LoginRemoteDataSource {
       case ServerType.opds:
         probeUrl = base;
         break;
+      case ServerType.gdriveJson:
+        // Handled by the early return to _probeGdriveFileId above.
+        return EndpointStatus.idle;
     }
 
     final uri = Uri.tryParse(probeUrl);
@@ -519,6 +603,25 @@ class LoginRemoteDataSource {
     }
   }
 
+  Future<EndpointStatus> _probeGdriveFileId(String rawInput) async {
+    final fileId = GDrivePublicFileService.extractFileId(rawInput);
+    if (fileId == null) return EndpointStatus.idle;
+
+    try {
+      await GDrivePublicFileService().fetchMetadata(fileId);
+      return EndpointStatus.reachable;
+    } on GDriveFileException catch (e) {
+      switch (e.type) {
+        case GDriveFileErrorType.notPublic:
+          return EndpointStatus.authRequired;
+        default:
+          return EndpointStatus.unreachable;
+      }
+    } catch (_) {
+      return EndpointStatus.unreachable;
+    }
+  }
+
   Future<ServerType> getStoredServerType() async {
     final prefs = await SharedPreferences.getInstance();
     final typeStr = prefs.getString('server_type');
@@ -528,6 +631,8 @@ class LoginRemoteDataSource {
       return ServerType.booklore;
     } else if (typeStr == ServerType.calibre.name) {
       return ServerType.calibre;
+    } else if (typeStr == 'gdrive_json') {
+      return ServerType.gdriveJson;
     }
     return ServerType.calibreWeb;
   }

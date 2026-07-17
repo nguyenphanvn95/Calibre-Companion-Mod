@@ -209,7 +209,8 @@ class DiscoverDetailsRemoteDatasource {
     final isOpds =
         preferences.getString('server_type') == 'opds' ||
         preferences.getString('server_type') == 'grimmory' ||
-        preferences.getString('server_type') == 'booklore';
+        preferences.getString('server_type') == 'booklore' ||
+        preferences.getString('server_type') == 'gdrive_json';
 
     final Map<DiscoverType, String> paths = {
       DiscoverType.discover: '/opds/discover',

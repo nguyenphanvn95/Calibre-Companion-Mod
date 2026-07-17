@@ -7,6 +7,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:calibre_web_companion/features/login/bloc/login_bloc.dart';
 import 'package:calibre_web_companion/features/login/bloc/login_event.dart';
 import 'package:calibre_web_companion/features/login/bloc/login_state.dart';
+import 'package:calibre_web_companion/core/services/gdrive_public_file_service.dart';
 
 import 'package:calibre_web_companion/l10n/app_localizations.dart';
 import 'package:calibre_web_companion/core/services/snackbar.dart';
@@ -71,6 +72,28 @@ class _LoginFormState extends State<LoginForm> {
     }
   }
 
+  Widget _buildPasteFromClipboardButton(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4.0),
+      child: IconButton(
+        tooltip: 'Paste from clipboard',
+        icon: const Icon(Icons.content_paste_rounded),
+        onPressed: () async {
+          final data = await Clipboard.getData(Clipboard.kTextPlain);
+          final text = data?.text?.trim();
+          if (text == null || text.isEmpty || !mounted) return;
+
+          final fileId = GDrivePublicFileService.extractFileId(text) ?? text;
+          _urlController.text = fileId;
+          _urlController.selection = TextSelection.fromPosition(
+            TextPosition(offset: fileId.length),
+          );
+          _onUrlChanged(fileId);
+        },
+      ),
+    );
+  }
+
   Widget? _buildUrlSuffix(
     BuildContext context,
     EndpointStatus status,
@@ -112,10 +135,19 @@ class _LoginFormState extends State<LoginForm> {
     }
   }
 
+  bool get _isGdriveJson =>
+      context.read<LoginBloc>().state.serverType == ServerType.gdriveJson;
+
   void _scheduleEndpointCheck() {
     _endpointDebounce?.cancel();
     _endpointDebounce = Timer(const Duration(milliseconds: 700), () {
       if (!mounted) return;
+      if (_isGdriveJson) {
+        context.read<LoginBloc>().add(
+          CheckEndpoint(_urlController.text.trim()),
+        );
+        return;
+      }
       final protocol = _isHttps ? 'https://' : 'http://';
       final url = '$protocol${_urlController.text.trim()}';
       context.read<LoginBloc>().add(CheckEndpoint(url));
@@ -123,12 +155,22 @@ class _LoginFormState extends State<LoginForm> {
   }
 
   void _updateBlocUrl() {
+    if (_isGdriveJson) {
+      context.read<LoginBloc>().add(EnterUrl(_urlController.text.trim()));
+      return;
+    }
     final protocol = _isHttps ? 'https://' : 'http://';
     final domain = _urlController.text;
     context.read<LoginBloc>().add(EnterUrl('$protocol$domain'));
   }
 
   void _onUrlChanged(String value) {
+    if (_isGdriveJson) {
+      context.read<LoginBloc>().add(EnterUrl(value.trim()));
+      _scheduleEndpointCheck();
+      return;
+    }
+
     String cleanValue = value;
     bool protocolChanged = false;
 
@@ -222,6 +264,15 @@ class _LoginFormState extends State<LoginForm> {
             urlHint = 'www.gutenberg.org/ebooks/search.opds';
             typeIcon = Icons.rss_feed_rounded;
             break;
+          case ServerType.gdriveJson:
+            urlLabel = 'Google Drive File ID (metadata_public.json)';
+            urlHint = '1Bk6sTrzbWFeF1LLYdQKnGSX0A5MCwrew';
+            urlHelper =
+                'From a share link like drive.google.com/file/d/'
+                'FILE_ID/view - paste the link or just the ID. The file '
+                'must be shared as "Anyone with the link".';
+            typeIcon = Icons.cloud_rounded;
+            break;
         }
 
         return Padding(
@@ -264,6 +315,10 @@ class _LoginFormState extends State<LoginForm> {
                                 value: ServerType.opds,
                                 label: Text('OPDS'),
                               ),
+                              ButtonSegment<ServerType>(
+                                value: ServerType.gdriveJson,
+                                label: Text('GDrive JSON'),
+                              ),
                             ],
                             selected: {state.serverType},
                             onSelectionChanged: (newSelection) {
@@ -298,7 +353,10 @@ class _LoginFormState extends State<LoginForm> {
                           state.endpointStatus,
                           localizations,
                         ),
-                        prefix: Row(
+                        prefix:
+                            state.serverType == ServerType.gdriveJson
+                                ? _buildPasteFromClipboardButton(context)
+                                : Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Padding(
@@ -381,9 +439,10 @@ class _LoginFormState extends State<LoginForm> {
                         const SizedBox(height: 8),
                       ],
 
-                      if ((state.serverType != ServerType.opds &&
-                              state.serverType != ServerType.calibre) ||
-                          _opdsRequiresAuth) ...[
+                      if (state.serverType != ServerType.gdriveJson &&
+                          ((state.serverType != ServerType.opds &&
+                                  state.serverType != ServerType.calibre) ||
+                              _opdsRequiresAuth)) ...[
                         LoginTextField(
                           controller: _usernameController,
                           labelText: localizations.username,
@@ -642,16 +701,27 @@ class _LoginFormState extends State<LoginForm> {
     if (context.read<LoginBloc>().state.status == LoginStatus.loading) return;
 
     final state = context.read<LoginBloc>().state;
+    final bool isGdriveJson = state.serverType == ServerType.gdriveJson;
     final bool credentialsRequired =
-        (state.serverType != ServerType.opds &&
-            state.serverType != ServerType.calibre) ||
-        _opdsRequiresAuth;
+        !isGdriveJson &&
+        ((state.serverType != ServerType.opds &&
+                state.serverType != ServerType.calibre) ||
+            _opdsRequiresAuth);
 
     if (_urlController.text.isEmpty ||
         (credentialsRequired &&
             (_usernameController.text.isEmpty ||
                 _passwordController.text.isEmpty))) {
       context.showSnackBar(localizations.pleaseFillInAllFields, isError: true);
+      return;
+    }
+
+    if (isGdriveJson) {
+      final fileId =
+          GDrivePublicFileService.extractFileId(_urlController.text.trim()) ??
+          _urlController.text.trim();
+      context.read<LoginBloc>().add(EnterUrl(fileId));
+      context.read<LoginBloc>().add(const SubmitLogin());
       return;
     }
 

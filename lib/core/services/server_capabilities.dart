@@ -72,10 +72,27 @@ class ServerCapabilities {
     multiLibrary: false,
   );
 
+  static const ServerCapabilities gdriveJson = ServerCapabilities(
+    pagination: true,
+    search: true,
+    sort: true,
+    addBooks: false,
+    editMetadata: false,
+    metadataLookup: false,
+    deleteBooks: false,
+    shelves: false,
+    readingProgress: false,
+    userStats: true,
+    discover: false,
+    multiLibrary: false,
+  );
+
   factory ServerCapabilities.fromServerType(String? serverType) {
     switch (serverType) {
       case 'calibre':
         return calibre;
+      case 'gdrive_json':
+        return gdriveJson;
       case 'opds':
       case 'grimmory':
       case 'booklore':

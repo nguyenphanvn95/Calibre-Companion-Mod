@@ -1346,6 +1346,35 @@ class ApiService {
       ];
     }
 
+    if (serverType == 'gdrive_json') {
+      // The embedded local server only exposes its own routes (see
+      // gdrive_local_server.dart), not a real Calibre-Web/OPDS backend, so
+      // this checks its actual feed + cover routes instead of /opds/stats
+      // (which was never implemented for this source type).
+      return [
+        await _probe(
+          DiagnosticProbeId.serverReachable,
+          'Local server reachable',
+          '/',
+          AuthMethod.none,
+          connectivityOnly: true,
+        ),
+        await _probe(
+          DiagnosticProbeId.opdsFeed,
+          'Library feed',
+          '/',
+          AuthMethod.none,
+        ),
+        await _probe(
+          DiagnosticProbeId.coverImage,
+          'Cover image (book 1)',
+          '/opds/cover/1',
+          AuthMethod.none,
+          expectBinary: true,
+        ),
+      ];
+    }
+
     return [
       await _probe(
         DiagnosticProbeId.serverReachable,
